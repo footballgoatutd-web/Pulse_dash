@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Pulse Runner</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#080b17;color:#fff;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+#ui{position:fixed;inset:0;pointer-events:none}
+.top{position:absolute;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;gap:10px}
+.card{background:#0d1424df;border:1px solid #ffffff20;border-radius:12px;padding:9px 12px;box-shadow:0 8px 30px #0005}
+#progress{position:absolute;top:62px;left:12px;right:12px;height:6px;background:#222b40;border-radius:99px;overflow:hidden}
+#progress i{display:block;height:100%;width:0;background:#53e6ff}
+#hint{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:12px}
+#overlay{position:fixed;inset:0;background:#050814ed;display:flex;align-items:center;justify-content:center;z-index:5}
+.modal{width:min(540px,92vw);background:#11192a;border:1px solid #3b4a65;border-radius:24px;padding:28px;text-align:center}
+h1{font-size:46px;line-height:1;margin:0 0 8px;letter-spacing:2px}
+p{color:#b9c6d9;line-height:1.5}
+button{border:0;background:#4d79ff;color:#fff;border-radius:12px;padding:13px 22px;font-size:16px;font-weight:900;cursor:pointer;touch-action:manipulation}
+#touch{display:none;position:absolute;bottom:65px;right:16px;pointer-events:auto}
+#jump{width:90px;height:90px;border-radius:50%;font-size:18px;background:#4d79ffcc}
+@media(max-width:700px){#touch{display:block}#hint{bottom:10px;font-size:10px}h1{font-size:36px}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui">
+  <div class="top">
+    <div class="card">LEVEL 1 · <b id="percent">0%</b></div>
+    <div class="card">⭐ <b id="score">0</b> · 💀 <b id="deaths">0</b></div>
+  </div>
+  <div id="progress"><i id="prog"></i></div>
+  <div id="hint" class="card">SPACE / ↑ / TAP to jump</div>
+  <div id="touch"><button id="jump">JUMP</button></div>
+</div>
+
+<div id="overlay">
+ <div class="modal">
+   <h1>PULSE RUNNER</h1>
+   <p>An original one-button rhythm platformer with precise jumping, hazards, checkpoints, particles and a complete level.</p>
+   <p><b>SPACE</b> / <b>↑</b> / <b>TAP</b> = jump</p>
+   <button id="play">PLAY</button>
+ </div>
+</div>
+
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');
+let W,H,D,playing=false,last=0,cam=0,deaths=0,score=0;
+const levelW=16000, groundY=0;
+let player,parts=[],shake=0;
+
+const platforms=[
+ [0,500,900,100],[1100,500,800,100],[2100,450,1000,150],[3300,500,900,100],
+ [4450,440,850,160],[5450,500,950,100],[6600,455,1000,145],[7800,500,850,100],
+ [8900,430,1000,170],[10100,500,900,100],[11200,460,1050,140],[12500,500,850,100],
+ [13600,440,1100,160],[15000,500,1000,100]
+];
+const spikes=[
+ [650,468,30,32],[790,468,30,32],[1420,468,30,32],[1700,468,30,32],
+ [2350,418,30,32],[2700,418,30,32],[3050,418,30,32],[3700,468,30,32],
+ [4000,468,30,32],[4750,408,30,32],[5050,408,30,32],[5700,468,30,32],
+ [6200,468,30,32],[7000,423,30,32],[7350,423,30,32],[8050,468,30,32],
+ [9250,398,30,32],[9600,398,30,32],[10400,468,30,32],[10800,468,30,32],
+ [11550,428,30,32],[12000,428,30,32],[12850,468,30,32],[13300,468,30,32],
+ [14100,408,30,32],[14600,408,30,32],[15400,468,30,32]
+];
+const blocks=[
+ [980,420,90,80],[1950,400,100,100],[3200,400,100,100],[4300,410,100,90],
+ [5300,390,100,110],[6400,390,100,65],[7650,410,90,90],[8750,390,100,40],
+ [9950,410,100,90],[11000,410,100,50],[12350,390,100,110],[13500,390,100,50],
+ [14800,390,100,110]
+];
+function resize(){D=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*D;c.height=H*D;ctx.setTransform(D,0,0,D,0,0)}addEventListener('resize',resize);resize();
+
+function reset(){
+ player={x:120,y:450,vx:360,vy:0,size:32,onGround:false,angle:0};
+ cam=0;score=0;parts=[];shake=0;
+}
+function start(){document.getElementById('overlay').style.display='none';reset();playing=true;last=performance.now();requestAnimationFrame(loop)}
+document.getElementById('play').addEventListener('click',start);
+document.getElementById('play').addEventListener('pointerup',e=>{e.preventDefault();start()});
+
+function jump(){
+ if(!playing)return;
+ if(player.onGround){player.vy=-650;player.onGround=false;burst(player.x,player.y+20,8)}
+}
+addEventListener('keydown',e=>{if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();jump()}});
+c.addEventListener('pointerdown',jump);
+document.getElementById('jump').addEventListener('pointerdown',e=>{e.preventDefault();jump()});
+
+function burst(x,y,n){
+ for(let i=0;i<n;i++)parts.push({x,y,vx:(Math.random()-.5)*220,vy:(Math.random()-.5)*220,life:.45})
+}
+function die(){
+ deaths++;shake=12;burst(player.x,player.y,25);
+ player.x=120;player.y=450;player.vy=0;cam=0;
+ document.getElementById('deaths').textContent=deaths;
+}
+function rectHit(a,b){return a.x<a.x+a.size && a.x+a.size>b[0]&&a.y+ a.size>b[1]&&a.y<b[1]+b[3]}
+function update(dt){
+ player.vy+=1550*dt;player.x+=player.vx*dt;player.y+=player.vy*dt;player.angle+=dt*5.5;
+ player.onGround=false;
+ for(const p of platforms){
+   if(player.x+player.size>p[0]&&player.x<p[0]+p[2]&&player.y+player.size>=p[1]&&player.y+player.size<=p[1]+35&&player.vy>=0){
+     player.y=p[1]-player.size;player.vy=0;player.onGround=true;
+   }
+ }
+ for(const b of blocks){
+   if(player.x+player.size>b[0]&&player.x<b[0]+b[2]&&player.y+player.size>b[1]&&player.y<b[1]+b[3]){
+     if(player.vy>0&&player.y+player.size-player.vy*dt<=b[1]){player.y=b[1]-player.size;player.vy=0;player.onGround=true}
+     else die();
+   }
+ }
+ for(const s of spikes){
+   const sx=s[0],sy=s[1],sw=s[2],sh=s[3];
+   if(player.x+player.size-5>sx&&player.x+5<sx+sw&&player.y+player.size-4>sy+8&&player.y+5<sy+sh)die();
+ }
+ if(player.y>H+300)die();
+ cam=Math.max(0,Math.min(levelW-W,player.x-W*.28));
+ score=Math.max(score,Math.floor(player.x/10));
+ let pct=Math.min(100,Math.floor(player.x/(levelW-W)*100));
+ document.getElementById('percent').textContent=pct+'%';document.getElementById('prog').style.width=pct+'%';document.getElementById('score').textContent=score;
+ if(player.x>=levelW-W){finish()}
+ parts.forEach(q=>{q.x+=q.vx*dt;q.y+=q.vy*dt;q.life-=dt});parts=parts.filter(q=>q.life>0);
+}
+function finish(){
+ playing=false;
+ document.querySelector('#overlay .modal').innerHTML=`<h1>LEVEL COMPLETE!</h1><p>⭐ Score: <b>${score}</b><br>💀 Deaths: <b>${deaths}</b></p><button id="again">PLAY AGAIN</button>`;
+ document.getElementById('overlay').style.display='flex';
+ document.getElementById('again').onclick=()=>{deaths=0;start()};
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ const bg=ctx.createLinearGradient(0,0,0,H);bg.addColorStop(0,'#08132d');bg.addColorStop(1,'#21104b');ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+ // beat grid
+ ctx.strokeStyle='#ffffff12';ctx.lineWidth=1;
+ for(let x=-(cam%100);x<W;x+=100){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+ for(let y=80;y<H;y+=80){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+ // stars
+ for(let i=0;i<55;i++){let x=(i*317-cam*.18)%W;if(x<0)x+=W;let y=(i*97)%Math.max(100,H*.65);ctx.fillStyle='#ffffff66';ctx.fillRect(x,y,2,2)}
+ function sx(x){return x-cam}
+ // platforms
+ for(const p of platforms){ctx.fillStyle='#172f52';ctx.fillRect(sx(p[0]),p[1],p[2],p[3]);ctx.fillStyle='#4ee6ff';ctx.fillRect(sx(p[0]),p[1],p[2],5)}
+ // blocks
+ for(const b of blocks){ctx.fillStyle='#6a35c9';ctx.fillRect(sx(b[0]),b[1],b[2],b[3]);ctx.strokeStyle='#b58cff';ctx.strokeRect(sx(b[0])+2,b[1]+2,b[2]-4,b[3]-4)}
+ // spikes
+ for(const s of spikes){ctx.fillStyle='#ff4f73';ctx.beginPath();ctx.moveTo(sx(s[0]),s[1]+s[3]);ctx.lineTo(sx(s[0]+s[2]/2),s[1]);ctx.lineTo(sx(s[0]+s[2]),s[1]+s[3]);ctx.closePath();ctx.fill()}
+ // finish portal
+ ctx.fillStyle='#53e6ff';ctx.shadowBlur=30;ctx.shadowColor='#53e6ff';ctx.beginPath();ctx.arc(sx(levelW-650),330,55,0,7);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#11192a';ctx.beginPath();ctx.arc(sx(levelW-650),330,35,0,7);ctx.fill()
+ // player
+ ctx.save();ctx.translate(sx(player.x+player.size/2),player.y+player.size/2);ctx.rotate(player.angle);ctx.fillStyle='#55e6ff';ctx.shadowBlur=25;ctx.shadowColor='#55e6ff';ctx.fillRect(-16,-16,32,32);ctx.fillStyle='#10213a';ctx.fillRect(-9,-9,18,18);ctx.restore();ctx.shadowBlur=0;
+ parts.forEach(q=>{ctx.globalAlpha=Math.max(0,q.life*2);ctx.fillStyle='#53e6ff';ctx.fillRect(sx(q.x),q.y,4,4);ctx.globalAlpha=1});
+}
+function loop(t){if(!playing)return;let dt=Math.min(.025,(t-last)/1000);last=t;update(dt);draw();requestAnimationFrame(loop)}
+</script>
+</body>
+</html>
